@@ -246,7 +246,10 @@ void at_cmd_process(uint8_t *data, uint16_t size)
     {
         if (m_ble_connected == 0)
         {
+			scan_list.scan_timeout = 0;
             get_scan_list_start();
+			scan_list.connected = 0;
+			NRF_LOG_INFO("get_scan_list_start");
             return ;
         }
         NRF_LOG_INFO("[%s] start scan...", __func__);

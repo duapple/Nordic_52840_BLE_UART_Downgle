@@ -215,7 +215,7 @@ static void scan_evt_handler(scan_evt_t const * p_scan_evt)
          case NRF_BLE_SCAN_EVT_CONNECTED:
          {
              // Scan is automatically stopped by the connection.
-             NRF_LOG_INFO("Connecting to target %02x%02x%02x%02x%02x%02x",
+             NRF_LOG_INFO("Connecting to target %02X:%02X:%02X:%02X:%02X:%02X",
                       p_connected->peer_addr.addr[0],
                       p_connected->peer_addr.addr[1],
                       p_connected->peer_addr.addr[2],
@@ -337,7 +337,7 @@ void uart_event_handle(app_uart_evt_t * p_event)
             UNUSED_VARIABLE(app_uart_get(&data_array[index]));
             index++;
 		
-			if (data_array[index - 1] == 0x08)
+			if (m_ble_connected ==0 && data_array[index - 1] == 0x08)
 			{
 				index -= 2;
 				
@@ -346,7 +346,7 @@ void uart_event_handle(app_uart_evt_t * p_event)
 				return ;
 			}
 			
-			if (1 || m_ble_connected == 0)
+			if (m_ble_connected == 0)
 			{
 				if (data_array[index - 1] == '\n' ||
 					data_array[index - 1] == '\r')
