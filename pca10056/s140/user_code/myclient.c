@@ -9,6 +9,7 @@
 #include "ble_nus_c.h"
 
 #include "app_fstorage.h"
+#include "nrf_delay.h"
 
 APP_TIMER_DEF(scan_timeout_id);
 
@@ -241,6 +242,7 @@ void at_cmd_process(uint8_t *data, uint16_t size)
     }
 
     NRF_LOG_INFO("cmd: %s", data);
+	nrf_delay_ms(100);
     if ( 0 == strncmp((const char *)(data + 3), "rescan", 6) ||
             0 == strncmp((const char *)(data + 3), "RESCAN", 6) )
     {
@@ -261,6 +263,11 @@ void at_cmd_process(uint8_t *data, uint16_t size)
         }
         scan_start();
     }
+	else if ( 0 == strncmp((const char *)(data + 3), "reboot", 6) ||
+            0 == strncmp((const char *)(data + 3), "REBOOT", 6) ){
+		sd_ble_gap_disconnect(m_ble_conn_handle, BLE_HCI_REMOTE_USER_TERMINATED_CONNECTION);
+		NVIC_SystemReset();
+	}
     else
     {
         UART_LOG_INFO("AT cmd error.\r\n");
