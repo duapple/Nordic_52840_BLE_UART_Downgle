@@ -10,6 +10,8 @@
 
 #include "app_fstorage.h"
 #include "nrf_delay.h"
+#include "ble_gap.h"
+#include "ble_advdata.h"
 
 APP_TIMER_DEF(scan_timeout_id);
 
@@ -81,7 +83,7 @@ static void scan_timeout_stop(void)
 
 static uint32_t clear_scan_dev_list(void)
 {
-    memset(&scan_list, 0, SCAN_LIST_SIZE * 6);
+    memset(&scan_list, 0, sizeof(scan_list_info_t));
     scan_list.match_index = 255;
     return 0;
 }
@@ -93,10 +95,11 @@ void myclient_init(void)
 
     app_timer_create(&scan_timeout_id, APP_TIMER_MODE_SINGLE_SHOT, scan_timeout_handler);
 
-    uint8_t flash_read_buff[32];
+    uint8_t flash_read_buff[64];
     myfstorage_read(SCAN_RECORD_ADDR, flash_read_buff, sizeof(scan_record_t));
     NRF_LOG_INFO("scan_record_t size: %d", sizeof(scan_record_t));
 
+	memset(&scan_record_in_flash, 0, sizeof(scan_record_t));
     memcpy(&scan_record_in_flash, flash_read_buff, sizeof(scan_record_t));
     if (scan_record_in_flash.valid == 0x55)
     {
@@ -109,6 +112,7 @@ void myclient_init(void)
         scan_list.connected = 1;
         scan_list.match_index = 0;
         memcpy(scan_list.dev_info[scan_list.match_index].mac_addr, scan_record_in_flash.mac_addr, sizeof(uint8_t) * 6);
+		// memcpy(scan_list.dev_info[scan_list.match_index].dev_name, scan_record_in_flash.dev_name, strlen((const char *)scan_record_in_flash.dev_name));
     }
 }
 
@@ -133,12 +137,15 @@ static ble_gap_conn_params_t const m_connection_param =
     (uint16_t)SUPERVISION_TIMEOUT
 };
 extern void scan_stop(void);
-uint32_t get_scan_list(ble_gap_addr_t *peer_addr, ble_gap_scan_params_t *p_scan_param)
+uint32_t get_scan_list(ble_gap_evt_adv_report_t const *p_not_found, ble_gap_scan_params_t *p_scan_param)
 {
     if (scan_list.scan_timeout == 1)
     {
         return 0;
     }
+
+    const ble_gap_addr_t *peer_addr = &p_not_found->peer_addr;
+
     if (scan_list.connected == 1)
     {
         if (memcmp(peer_addr->addr, scan_list.dev_info[scan_list.match_index].mac_addr, 6) == 0)
@@ -150,12 +157,12 @@ uint32_t get_scan_list(ble_gap_addr_t *peer_addr, ble_gap_scan_params_t *p_scan_
                 NRF_LOG_INFO("connect failed.");
             } else
             {
-                UART_LOG_INFO("Connected DEV[%d] success.\r\n", scan_list.match_index);
+                UART_LOG_INFO("Connected DEV[%d] %s success.\r\n", scan_list.match_index, scan_list.dev_info[scan_list.match_index].dev_name);
                 //UART_LOG_INFO("%c", 0x0c);
             }
             get_scan_list_start();
         }
-        return 0;
+        return 1;
     }
     if (scan_list.scan_nums >= SCAN_LIST_SIZE)
     {
@@ -172,15 +179,44 @@ uint32_t get_scan_list(ble_gap_addr_t *peer_addr, ble_gap_scan_params_t *p_scan_
         }
     }
 
+    // 存储 MAC Addr到数据结构
     memcpy(&scan_list.dev_info[scan_list.scan_nums].mac_addr, peer_addr->addr, 6);
+	    // 存储 Device NAME到数据结构
+    uint8_t * adv_data = p_not_found->data.p_data;
+    uint16_t adv_data_size = p_not_found->data.len;
+    uint8_t * device_name = ble_advdata_parse(adv_data, \
+                            adv_data_size, \
+                            BLE_GAP_AD_TYPE_COMPLETE_LOCAL_NAME);
+    if (!device_name)
+    {
+        device_name = ble_advdata_parse(adv_data, \
+                                        adv_data_size, \
+                                        BLE_GAP_AD_TYPE_SHORT_LOCAL_NAME);
+        if (device_name)
+            NRF_LOG_INFO("BLE_GAP_AD_TYPE_SHORT_LOCAL_NAME");
+    }
+
+    if (device_name)
+    {
+//        char device_name_buff[128] = {0};
+//        uint16_t data_len = (adv_data + adv_data_size - device_name) / sizeof(uint8_t);
+//        NRF_LOG_INFO("size: %d", data_len);
+//        memcpy(device_name_buff, device_name, data_len);
+//        NRF_LOG_INFO("device name: %s", device_name_buff);
+		
+		uint16_t data_len = (adv_data + adv_data_size - device_name) / sizeof(uint8_t);
+		memcpy(scan_list.dev_info[scan_list.scan_nums].dev_name, device_name, data_len);
+    }
+	
     char buff[32] = {0};
-    uint8_t *mac_addr = peer_addr->addr;
-    snprintf(buff, 32, "%02X:%02X:%02X:%02X:%02X:%02X", mac_addr[0], mac_addr[1], mac_addr[2],\
-             mac_addr[3], mac_addr[4], mac_addr[5]);
+    uint8_t *mac_addr = (uint8_t *)peer_addr->addr;
+    snprintf(buff, 64, "%02X:%02X:%02X:%02X:%02X:%02X    %s", mac_addr[0], mac_addr[1], mac_addr[2],\
+             mac_addr[3], mac_addr[4], mac_addr[5], scan_list.dev_info[scan_list.scan_nums].dev_name);
     UART_LOG_INFO("DEV [%d]: %s\r\n", scan_list.scan_nums, buff);
 
+
     scan_list.scan_nums++;
-    return 0;
+    return 1;
 }
 
 static uint8_t write_mac_addr[6] = {0};
@@ -242,16 +278,16 @@ void at_cmd_process(uint8_t *data, uint16_t size)
     }
 
     NRF_LOG_INFO("cmd: %s", data);
-	nrf_delay_ms(100);
+    nrf_delay_ms(100);
     if ( 0 == strncmp((const char *)(data + 3), "rescan", 6) ||
             0 == strncmp((const char *)(data + 3), "RESCAN", 6) )
     {
         if (m_ble_connected == 0)
         {
-			scan_list.scan_timeout = 0;
+            scan_list.scan_timeout = 0;
             get_scan_list_start();
-			scan_list.connected = 0;
-			NRF_LOG_INFO("get_scan_list_start");
+            scan_list.connected = 0;
+            NRF_LOG_INFO("get_scan_list_start");
             return ;
         }
         NRF_LOG_INFO("[%s] start scan...", __func__);
@@ -263,11 +299,11 @@ void at_cmd_process(uint8_t *data, uint16_t size)
         }
         scan_start();
     }
-	else if ( 0 == strncmp((const char *)(data + 3), "reboot", 6) ||
-            0 == strncmp((const char *)(data + 3), "REBOOT", 6) ){
-		sd_ble_gap_disconnect(m_ble_conn_handle, BLE_HCI_REMOTE_USER_TERMINATED_CONNECTION);
-		NVIC_SystemReset();
-	}
+    else if ( 0 == strncmp((const char *)(data + 3), "reboot", 6) ||
+              0 == strncmp((const char *)(data + 3), "REBOOT", 6) ) {
+        sd_ble_gap_disconnect(m_ble_conn_handle, BLE_HCI_REMOTE_USER_TERMINATED_CONNECTION);
+        NVIC_SystemReset();
+    }
     else
     {
         UART_LOG_INFO("AT cmd error.\r\n");
